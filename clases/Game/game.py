@@ -31,34 +31,22 @@ class Game:
     self.enemigos = []
     self.cargar_nivel("Levels/L01.txt")
 
+  def cargar_imagen(self, ruta, con_colorkey=False):
+    img = pg.image.load(ruta).convert()
+    if con_colorkey:
+      img.set_colorkey(img.get_at((0, 0)))
+    return pg.transform.scale(img, (self.tile_size, self.tile_size))
+
   def cargar_recursos(self):
     # Imágenes del mapa
-    self.img_muro = pg.transform.scale(
-        pg.image.load("imagenes/muro_duro.png").convert(),
-        (self.tile_size, self.tile_size),
-    )
-    self.img_caja = pg.transform.scale(
-        pg.image.load("imagenes/muro_suave.png").convert(),
-        (self.tile_size, self.tile_size),
-    )
-    self.img_cesped = pg.transform.scale(
-        pg.image.load("imagenes/cesped.png").convert(),
-        (self.tile_size, self.tile_size),
-    )
-    self.img_salida = pg.transform.scale(
-        pg.image.load("imagenes/losa_puerta.png").convert(),
-        (self.tile_size, self.tile_size),
-    )
+    self.img_muro = self.cargar_imagen("imagenes/muro_duro.png")
+    self.img_caja = self.cargar_imagen("imagenes/muro_suave.png")
+    self.img_cesped = self.cargar_imagen("imagenes/cesped.png")
+    self.img_salida = self.cargar_imagen("imagenes/losa_puerta.png", con_colorkey=True)
 
-    # Imágenes de entidades
-    self.img_jugador = pg.transform.scale(
-        pg.image.load("imagenes/player_abajo_1.png").convert(),
-        (self.tile_size, self.tile_size),
-    )
-    self.img_enemigo = pg.transform.scale(
-        pg.image.load("imagenes/globo_derec_0.png").convert(),
-        (self.tile_size, self.tile_size),
-    )
+    # Imágenes de entidades (eliminación de fondo verde con colorkey)
+    self.img_jugador = self.cargar_imagen("imagenes/player_abajo_1.png", con_colorkey=True)
+    self.img_enemigo = self.cargar_imagen("imagenes/globo_derec_0.png", con_colorkey=True)
 
   def cargar_nivel(self, ruta):
     with open(ruta, "r", encoding="utf-8") as archivo:
@@ -95,9 +83,11 @@ class Game:
 
       # 2. Lógica del juego
       for j in self.jugadores:
-        j.actualizar()
+        j.actualizar(self.nivel_actual)
       for e in self.enemigos:
-        e.actualizar()
+        e.actualizar(self.nivel_actual)
+
+      self.verificar_colisiones()
 
       # 3. Dibujado
       self.screen.fill((255, 0, 0))
@@ -115,6 +105,17 @@ class Game:
 
     pg.quit()
     sys.exit()
+
+  def verificar_colisiones(self):
+    for j in self.jugadores:
+      if not j.is_alive:
+        continue
+      rect_j = j.get_rect()
+      for e in self.enemigos:
+        if e.is_alive:
+          rect_e = e.get_rect()
+          if rect_j.colliderect(rect_e):
+            j.recibir_dano()
 
   def dibujar_hud(self):
     hud_rect = pg.Rect(0, 0, self.width, self.hud_height)
@@ -156,7 +157,7 @@ class Game:
         y = self.hud_height + (fila_idx * self.tile_size)
 
         # Suelo por defecto
-        self.screen.blit(img_cesped if "img_cesped" in locals() else self.img_cesped, (x, y)) # type: ignore
+        self.screen.blit(self.img_cesped, (x, y))
 
         if caracter == "*":
           self.screen.blit(self.img_muro, (x, y))
