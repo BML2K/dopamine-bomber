@@ -21,11 +21,16 @@ class Enemigo(Entidad):
         self.muerte_terminada = False
         self.puntos = 200
 
-    def recibir_dano(self):
+    def recibir_dano(self, snd_morir=None):
         if not self.muriendo and self.is_alive:
             self.muriendo = True
             self.frame_muerte = 0
             self.contador_muerte = 0
+            if snd_morir:
+                try:
+                    snd_morir.play()
+                except Exception:
+                    pass
 
     def actualizar(self, nivel_actual):
         if not self.is_alive:

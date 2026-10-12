@@ -7,6 +7,7 @@ from clases.Entities.entities import Entidad, obtener_baldosas_solidas, es_posic
 from clases.Entities.bomba import Bomba, explotar_bomba
 from clases.Entities.enemy import Enemigo
 from clases.Entities.player import Jugador
+from clases.Game.gamemode import obtener_modo
 
 
 class Game:
@@ -29,6 +30,7 @@ class Game:
         self.font_hud = pg.font.Font("fuentes/pixeled.ttf", 12)
         self.font_banner = pg.font.Font("fuentes/pixeled.ttf", 22)
         self.font_sub = pg.font.Font("fuentes/pixeled.ttf", 12)
+        self.font_titulo = pg.font.Font("fuentes/pixeled.ttf", 30)
 
         # Memoria y persistencia de progreso
         self.archivo_guardado = "progreso.json"
@@ -41,15 +43,23 @@ class Game:
         self.guardado_speed = progreso.get("speed", 3.0)
         self.guardado_atravesar = progreso.get("atravesar_muros", False)
 
+        # Modo de juego elegido (clasico / dopaminico)
+        self.modo = obtener_modo(progreso.get("modo", "clasico"))
+
         # Recursos gráficos y sonoros
         self.cargar_recursos()
 
         # Estado del juego
-        # Posibles estados: "INTRO_NIVEL", "JUGANDO", "NIVEL_COMPLETADO", "GAME_OVER", "VICTORIA"
-        self.estado = "INTRO_NIVEL"
+        # Posibles estados: "MENU", "INTRO_NIVEL", "JUGANDO", "NIVEL_COMPLETADO", "GAME_OVER", "VICTORIA"
+        self.estado = "MENU"
         self.timer_estado = 0
         self.tiempo_restante = 200
         self.contador_segundos = 0
+
+        # Menú de inicio
+        self.opcion_menu = 0
+        self.menu_opciones = ["JUGAR", "MODO"]
+        self.modo_claves = ["clasico", "dopaminico"]
 
         # Nivel y entidades
         self.nivel_actual = []
@@ -65,14 +75,7 @@ class Game:
         self.powerups_revelados = []  # [{"col": c, "row": r, "tipo": tipo}]
         self.puntos_flotantes = []    # [{"x": x, "y": y, "img": img, "duracion": d}]
 
-        # Cargar el nivel guardado en memoria
-        self.iniciar_nivel(
-            self.nivel_numero,
-            max_bombas=self.guardado_bombas,
-            rango_bombas=self.guardado_rango,
-            speed=self.guardado_speed,
-            atravesar_muros=self.guardado_atravesar,
-        )
+        # Los niveles se cargan recién al elegir JUGAR desde el menú
 
     def cargar_progreso(self):
         """Carga el progreso guardado desde progreso.json si existe."""
@@ -92,6 +95,7 @@ class Game:
             "rango_bombas": 2,
             "speed": 3.0,
             "atravesar_muros": False,
+            "modo": "clasico",
         }
 
     def guardar_progreso(self):
@@ -107,8 +111,9 @@ class Game:
             "mejor_puntaje": self.mejor_puntaje,
             "max_bombas": j.max_bombas if j else getattr(self, "guardado_bombas", 1),
             "rango_bombas": j.rango_bombas if j else getattr(self, "guardado_rango", 2),
-            "speed": j.speed if j else getattr(self, "guardado_speed", 3.0),
+            "speed": j.speed_base if j else getattr(self, "guardado_speed", 3.0),
             "atravesar_muros": j.atravesar_muros if j else getattr(self, "guardado_atravesar", False),
+            "modo": self.modo.clave,
         }
         try:
             with open(self.archivo_guardado, "w", encoding="utf-8") as f:
@@ -209,12 +214,18 @@ class Game:
             "atravesar": self.cargar_imagen("imagenes/losa_atravesar_muros.png"),
         }
 
-        # 9. Sonidos y Música
-        self.snd_poner_bomba = pg.mixer.Sound("sonidos/poner_bomba.wav")
-        self.snd_boom = pg.mixer.Sound("sonidos/boom.wav")
-        self.snd_stage_start = pg.mixer.Sound("sonidos/02_Stage_Start.wav")
+        # 9. Música de fondo (los efectos de sonido dependen del modo, ver cargar_sonidos_modo)
         self.musica_tema = "sonidos/03_Stage_Theme.wav"
 
+    def cargar_sonidos_modo(self):
+        """Carga los efectos de sonido según el modo de juego activo."""
+        self.snd_poner_bomba = pg.mixer.Sound(self.modo.ruta_poner_bomba)
+        self.snd_boom = pg.mixer.Sound(self.modo.ruta_boom)
+        self.snd_stage_start = pg.mixer.Sound(self.modo.ruta_stage_start)
+        self.snd_stage_victoria = pg.mixer.Sound(self.modo.ruta_stage_victoria)
+        self.snd_stage_die = pg.mixer.Sound(self.modo.ruta_stage_die)
+        self.snd_stage_powerup = pg.mixer.Sound(self.modo.ruta_stage_powerup)
+        
     def obtener_ruta_nivel(self, num_nivel):
         ruta = f"Levels/L{num_nivel:02d}.TXT"
         if not os.path.exists(ruta):
@@ -247,6 +258,9 @@ class Game:
         if not ruta_nivel:
             self.estado = "VICTORIA"
             return
+
+        # Los efectos de sonido dependen del modo activo
+        self.cargar_sonidos_modo()
 
         self.nivel_numero = num_nivel
         self.nivel_actual = []
@@ -295,9 +309,12 @@ class Game:
                                 jugador.rango_bombas = self.guardado_rango
 
                             if speed is not None:
-                                jugador.speed = speed
+                                jugador.speed_base = speed
                             elif hasattr(self, "guardado_speed"):
-                                jugador.speed = self.guardado_speed
+                                jugador.speed_base = self.guardado_speed
+                            else:
+                                jugador.speed_base = 3.0
+                            jugador.speed = jugador.speed_base * self.modo.velocidad_mult
 
                             if atravesar_muros is not None:
                                 jugador.atravesar_muros = atravesar_muros
@@ -307,14 +324,16 @@ class Game:
                             self.jugadores.append(jugador)
                             fila_lista[col_idx] = " "
                         elif caracter in ["2", "3", "4"]:
-                            self.enemigos.append(
-                                Enemigo(
-                                    col_idx,
-                                    fila_idx,
-                                    self.tile_size,
-                                    sprites=self.sprites_enemigo,
-                                )
+                            enemigo = Enemigo(
+                                col_idx,
+                                fila_idx,
+                                self.tile_size,
+                                sprites=self.sprites_enemigo,
                             )
+                            enemigo.speed *= self.modo.enemigo_mult
+                            self.enemigos.append(enemigo)
+                            fila_lista[col_idx] = " "
+                        elif caracter in ["D", "L", "R", "U"]:
                             fila_lista[col_idx] = " "
                         elif caracter == "-":
                             cajas_pos.append((col_idx, fila_idx))
@@ -372,7 +391,7 @@ class Game:
 
     def comenzar_partida(self):
         try:
-            pg.mixer.music.load(self.musica_tema)
+            pg.mixer.music.load(self.modo.ruta_musica)
             pg.mixer.music.play(-1)
         except Exception:
             pass
@@ -390,6 +409,30 @@ class Game:
             speed=3.0 if lvl == 1 else getattr(self, "guardado_speed", 3.0),
         )
 
+    def iniciar_partida_desde_menu(self):
+        """Arranca la partida en el nivel guardado con las mejoras guardadas."""
+        lvl = self.nivel_numero
+        self.iniciar_nivel(
+            lvl,
+            max_bombas=self.guardado_bombas,
+            rango_bombas=self.guardado_rango,
+            speed=self.guardado_speed,
+            atravesar_muros=self.guardado_atravesar,
+        )
+
+    def alternar_modo(self):
+        """Cambia entre el modo clásico y el dopamínico, persistiendo la elección."""
+        idx = self.modo_claves.index(self.modo.clave) if self.modo.clave in self.modo_claves else 0
+        nueva_clave = self.modo_claves[(idx + 1) % len(self.modo_claves)]
+        self.modo = obtener_modo(nueva_clave)
+        self.guardar_progreso()
+
+    def volver_al_menu(self):
+        """Detiene la partida en curso y regresa al menú de inicio."""
+        pg.mixer.music.stop()
+        self.estado = "MENU"
+        self.opcion_menu = 0
+
     def ejecutar(self):
         running = True
         while running:
@@ -398,7 +441,21 @@ class Game:
                 if event.type == pg.QUIT:
                     running = False
                 elif event.type == pg.KEYDOWN:
-                    if self.estado == "JUGANDO":
+                    if self.estado == "MENU":
+                        if event.key in [pg.K_UP, pg.K_w]:
+                            self.opcion_menu = (self.opcion_menu - 1) % len(self.menu_opciones)
+                        elif event.key in [pg.K_DOWN, pg.K_s]:
+                            self.opcion_menu = (self.opcion_menu + 1) % len(self.menu_opciones)
+                        elif event.key in [pg.K_LEFT, pg.K_RIGHT, pg.K_a, pg.K_d]:
+                            self.alternar_modo()
+                        elif event.key in [pg.K_RETURN, pg.K_SPACE]:
+                            if self.opcion_menu == 0:
+                                self.iniciar_partida_desde_menu()
+                            else:
+                                self.alternar_modo()
+                        elif event.key == pg.K_ESCAPE:
+                            running = False
+                    elif self.estado == "JUGANDO":
                         if event.key in [pg.K_p, pg.K_ESCAPE]:
                             self.estado = "PAUSA"
                             pg.mixer.music.pause()
@@ -409,6 +466,7 @@ class Game:
                                         self.nivel_actual,
                                         self.bombas_activas,
                                         snd_poner_bomba=self.snd_poner_bomba,
+                                        tiempo_vida=self.modo.bomba_tiempo_vida,
                                     )
                     elif self.estado == "PAUSA":
                         if event.key in [pg.K_p, pg.K_ESCAPE, pg.K_RETURN, pg.K_SPACE]:
@@ -416,6 +474,8 @@ class Game:
                             pg.mixer.music.unpause()
                         elif event.key == pg.K_r:
                             self.reiniciar_juego(self.nivel_numero)
+                        elif event.key == pg.K_m:
+                            self.volver_al_menu()
                         elif event.key == pg.K_q:
                             running = False
                     elif self.estado in ["GAME_OVER", "VICTORIA"]:
@@ -423,10 +483,14 @@ class Game:
                             self.reiniciar_juego(self.nivel_numero)
                         elif event.key == pg.K_1:
                             self.reiniciar_juego(1)
+                        elif event.key == pg.K_m:
+                            self.volver_al_menu()
                         elif event.key == pg.K_ESCAPE:
                             running = False
                     elif self.estado in ["INTRO_NIVEL", "NIVEL_COMPLETADO"]:
-                        if event.key == pg.K_ESCAPE:
+                        if event.key == pg.K_m:
+                            self.volver_al_menu()
+                        elif event.key == pg.K_ESCAPE:
                             running = False
 
             # 2. Actualización de Lógica según Estado
@@ -446,7 +510,7 @@ class Game:
                     puntaje = j.puntaje if j else 0
                     m_bombas = j.max_bombas if j else 1
                     r_bombas = j.rango_bombas if j else 2
-                    spd = j.speed if j else 3.0
+                    spd = j.speed_base if j else 3.0
 
                     self.iniciar_nivel(
                         self.nivel_numero + 1,
@@ -459,22 +523,25 @@ class Game:
                     )
 
             # 3. Dibujado en pantalla
-            self.screen.fill((20, 20, 25))
-            self.dibujar_hud()
-            self.dibujar_mapa()
-            self.dibujar_entidades()
+            if self.estado == "MENU":
+                self.dibujar_menu()
+            else:
+                self.screen.fill((20, 20, 25))
+                self.dibujar_hud()
+                self.dibujar_mapa()
+                self.dibujar_entidades()
 
-            # Capas superpuestas según el estado
-            if self.estado == "INTRO_NIVEL":
-                self.dibujar_banner_intro()
-            elif self.estado == "NIVEL_COMPLETADO":
-                self.dibujar_banner_completado()
-            elif self.estado == "PAUSA":
-                self.dibujar_pausa()
-            elif self.estado == "GAME_OVER":
-                self.dibujar_game_over()
-            elif self.estado == "VICTORIA":
-                self.dibujar_victoria()
+                # Capas superpuestas según el estado
+                if self.estado == "INTRO_NIVEL":
+                    self.dibujar_banner_intro()
+                elif self.estado == "NIVEL_COMPLETADO":
+                    self.dibujar_banner_completado()
+                elif self.estado == "PAUSA":
+                    self.dibujar_pausa()
+                elif self.estado == "GAME_OVER":
+                    self.dibujar_game_over()
+                elif self.estado == "VICTORIA":
+                    self.dibujar_victoria()
 
             pg.display.flip()
             self.clock.tick(self.fps)
@@ -491,7 +558,7 @@ class Game:
                 self.tiempo_restante -= 1
                 if self.tiempo_restante <= 0:
                     for j in self.jugadores:
-                        j.recibir_dano()
+                        j.recibir_dano(snd_morir=self.snd_stage_die)
 
         # Actualizar jugador
         for j in self.jugadores:
@@ -526,15 +593,15 @@ class Game:
                     for j in self.jugadores:
                         if j.is_alive and not j.muriendo:
                             if j.get_rect().colliderect(rect_fuego):
-                                j.recibir_dano()
+                                j.recibir_dano(snd_morir=self.snd_stage_die)
 
                     # Daño a enemigos por el fuego
                     for e in self.enemigos:
                         if e.is_alive and not e.muriendo:
                             if e.get_rect().colliderect(rect_fuego):
-                                e.recibir_dano()
+                                e.recibir_dano(snd_morir=self.snd_stage_die)
                                 if self.jugadores:
-                                    self.jugadores[0].puntaje += e.puntos
+                                    self.jugadores[0].puntaje += e.puntos * self.modo.puntuacion_mult
                                     # Generar cartelito de puntos flotantes
                                     self.crear_punto_flotante(e.x, e.y, e.puntos)
 
@@ -592,11 +659,12 @@ class Game:
                     elif tipo == "fuego":
                         j.rango_bombas += 1
                     elif tipo == "velocidad":
-                        j.speed = min(4.5, j.speed + 0.5)
+                        j.speed_base = min(4.5, j.speed_base + 0.5)
+                        j.speed = j.speed_base * self.modo.velocidad_mult
                     elif tipo == "atravesar":
                         j.atravesar_muros = True
 
-                    j.puntaje += 1000
+                    j.puntaje += 1000 * self.modo.puntuacion_mult
                     self.crear_punto_flotante(pu["col"] * self.tile_size, pu["row"] * self.tile_size, 1000)
                     self.powerups_revelados.remove(pu)
 
@@ -634,7 +702,7 @@ class Game:
             for e in self.enemigos:
                 if e.is_alive and not e.muriendo:
                     if rect_j.colliderect(e.get_rect()):
-                        j.recibir_dano()
+                        j.recibir_dano(snd_morir=self.snd_stage_die)
 
     def verificar_pasar_de_nivel(self):
         # La puerta se activa únicamente tras eliminar a todos los enemigos
@@ -655,7 +723,7 @@ class Game:
             if j.is_alive and not j.muriendo:
                 if j.get_rect().colliderect(puerta_rect):
                     # Nivel completado con éxito
-                    bonus = self.tiempo_restante * 10
+                    bonus = self.tiempo_restante * 10 * self.modo.puntuacion_mult
                     j.puntaje += bonus
                     self.estado = "NIVEL_COMPLETADO"
                     self.timer_estado = 120  # 2 segundos de pausa
@@ -772,14 +840,85 @@ class Game:
             py = round(self.hud_height + p["y"])
             self.screen.blit(p["img"], (px, py))
 
+    def dibujar_menu(self):
+        self.screen.fill((18, 16, 28))
+
+        # Fondo decorativo con baldosas de césped en patrón tenue
+        if hasattr(self, "img_cesped"):
+            for y in range(0, self.height, self.tile_size):
+                for x in range(0, self.width, self.tile_size):
+                    if ((x // self.tile_size) + (y // self.tile_size)) % 2 == 0:
+                        self.screen.blit(self.img_cesped, (x, y))
+            s = pg.Surface((self.width, self.height), pg.SRCALPHA)
+            s.fill((10, 8, 20, 210))
+            self.screen.blit(s, (0, 0))
+
+        # Título
+        color_titulo = (255, 220, 50) if self.modo.clave == "clasico" else (255, 60, 160)
+        txt_titulo = self.font_titulo.render("DOPAMINE", True, color_titulo)
+        rect_titulo = txt_titulo.get_rect(center=(self.width // 2, 110))
+        self.screen.blit(txt_titulo, rect_titulo)
+
+        txt_bomber = self.font_titulo.render("BOMBER", True, (100, 210, 255))
+        rect_bomber = txt_bomber.get_rect(center=(self.width // 2, 155))
+        self.screen.blit(txt_bomber, rect_bomber)
+
+        # Opciones del menú
+        y_op = 280
+        for i, texto in enumerate(self.menu_opciones):
+            seleccionada = (i == self.opcion_menu)
+            if i == 0:
+                contenido = "JUGAR"
+            else:
+                contenido = f"MODO: {self.modo.nombre}"
+            prefijo = "> " if seleccionada else "  "
+            color = (255, 255, 100) if seleccionada else (200, 200, 210)
+            txt = self.font_banner.render(prefijo + contenido, True, color)
+            rect = txt.get_rect(center=(self.width // 2, y_op + i * 55))
+            self.screen.blit(txt, rect)
+
+        # Descripción del modo seleccionado
+        if self.modo.clave == "dopaminico":
+            desc = "VELOCIDAD X2 - PUNTOS X2 - BOMBAS RAPIDAS"
+            color_desc = (255, 100, 180)
+        else:
+            desc = "EL CLASICO BOMBERMAN DE SIEMPRE"
+            color_desc = (150, 220, 255)
+        txt_desc = self.font_sub.render(desc, True, color_desc)
+        rect_desc = txt_desc.get_rect(center=(self.width // 2, y_op + 115))
+        self.screen.blit(txt_desc, rect_desc)
+
+        # Récords
+        txt_record = self.font_sub.render(
+            f"NIVEL MAX: {self.max_nivel_alcanzado}   RECORD: {self.mejor_puntaje}",
+            True,
+            (180, 180, 200),
+        )
+        rect_record = txt_record.get_rect(center=(self.width // 2, self.height - 130))
+        self.screen.blit(txt_record, rect_record)
+
+        # Controles
+        txt_ctrl = self.font_sub.render(
+            "↑↓ SELECCIONAR   ←→ CAMBIAR MODO   ENTER JUGAR   ESC SALIR",
+            True,
+            (140, 140, 160),
+        )
+        rect_ctrl = txt_ctrl.get_rect(center=(self.width // 2, self.height - 80))
+        self.screen.blit(txt_ctrl, rect_ctrl)
+
     def dibujar_banner_intro(self):
         s = pg.Surface((self.width, self.height), pg.SRCALPHA)
         s.fill((0, 0, 0, 180))
         self.screen.blit(s, (0, 0))
 
         txt = self.font_banner.render(f"STAGE {self.nivel_numero:02d}", True, (255, 255, 255))
-        rect = txt.get_rect(center=(self.width // 2, self.height // 2 - 20))
+        rect = txt.get_rect(center=(self.width // 2, self.height // 2 - 30))
         self.screen.blit(txt, rect)
+
+        color_modo = (255, 100, 180) if self.modo.clave == "dopaminico" else (150, 220, 255)
+        txt_modo = self.font_sub.render(f"MODO {self.modo.nombre}", True, color_modo)
+        rect_modo = txt_modo.get_rect(center=(self.width // 2, self.height // 2 + 5))
+        self.screen.blit(txt_modo, rect_modo)
 
         txt_sub = self.font_sub.render("¡ELIMINA A LOS ENEMIGOS Y CRUZA LA PUERTA!", True, (150, 220, 255))
         rect_sub = txt_sub.get_rect(center=(self.width // 2, self.height // 2 + 35))
@@ -794,7 +933,7 @@ class Game:
         rect = txt.get_rect(center=(self.width // 2, self.height // 2 - 30))
         self.screen.blit(txt, rect)
 
-        bonus = self.tiempo_restante * 10
+        bonus = self.tiempo_restante * 10 * self.modo.puntuacion_mult
         txt_bonus = self.font_sub.render(f"BONUS DE TIEMPO: +{bonus} PTS", True, (255, 230, 80))
         rect_bonus = txt_bonus.get_rect(center=(self.width // 2, self.height // 2 + 25))
         self.screen.blit(txt_bonus, rect_bonus)
@@ -823,9 +962,9 @@ class Game:
         rect_reiniciar = txt_reiniciar.get_rect(center=(self.width // 2, box_y + 145))
         self.screen.blit(txt_reiniciar, rect_reiniciar)
 
-        txt_salir = self.font_sub.render("[Q] SALIR DEL JUEGO", True, (255, 100, 100))
-        rect_salir = txt_salir.get_rect(center=(self.width // 2, box_y + 185))
-        self.screen.blit(txt_salir, rect_salir)
+        txt_menu = self.font_sub.render("[M] VOLVER AL MENU   [Q] SALIR", True, (255, 100, 100))
+        rect_menu = txt_menu.get_rect(center=(self.width // 2, box_y + 185))
+        self.screen.blit(txt_menu, rect_menu)
 
     def dibujar_game_over(self):
         s = pg.Surface((self.width, self.height), pg.SRCALPHA)
@@ -856,7 +995,7 @@ class Game:
         rect_retry = txt_retry.get_rect(center=(self.width // 2, box_y + 190))
         self.screen.blit(txt_retry, rect_retry)
 
-        txt_esc = self.font_sub.render("[ESC] SALIR", True, (200, 200, 200))
+        txt_esc = self.font_sub.render("[M] MENU   [ESC] SALIR", True, (200, 200, 200))
         rect_esc = txt_esc.get_rect(center=(self.width // 2, box_y + 225))
         self.screen.blit(txt_esc, rect_esc)
 
@@ -874,6 +1013,6 @@ class Game:
         rect_pts = txt_pts.get_rect(center=(self.width // 2, self.height // 2 + 15))
         self.screen.blit(txt_pts, rect_pts)
 
-        txt_re = self.font_sub.render("[ENTER] JUGAR DE NUEVO   [ESC] SALIR", True, (100, 220, 255))
+        txt_re = self.font_sub.render("[ENTER] JUGAR DE NUEVO   [M] MENU   [ESC] SALIR", True, (100, 220, 255))
         rect_re = txt_re.get_rect(center=(self.width // 2, self.height // 2 + 65))
         self.screen.blit(txt_re, rect_re)

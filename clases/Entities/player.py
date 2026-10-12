@@ -10,6 +10,7 @@ class Jugador(Entidad):
         self.vidas = 3
         self.puntaje = 0
         self.speed = 3.0
+        self.speed_base = 3.0  # velocidad sin multiplicadores de modo
 
         # Invulnerabilidad tras reaparecer o ser golpeado
         self.invulnerable = False
@@ -33,12 +34,18 @@ class Jugador(Entidad):
         self.bombas_activas = []
         self.atravesar_muros = False
 
-    def recibir_dano(self):
+    def recibir_dano(self, snd_morir=None):
         if not self.invulnerable and self.is_alive and not self.muriendo:
             self.muriendo = True
             self.frame_muerte = 0
             self.contador_muerte = 0
             self.moviendose = False
+
+            if snd_morir:
+                try:
+                    snd_morir.play()
+                except Exception:
+                    pass
 
     def actualizar_muerte(self):
         """Avanza la animación de muerte del jugador."""
@@ -66,7 +73,7 @@ class Jugador(Entidad):
         self.invulnerable = True
         self.tiempo_invulnerable = 120  # 2 segundos a 60 FPS
 
-    def poner_bomba(self, nivel_actual, lista_global_bombas, snd_poner_bomba=None):
+    def poner_bomba(self, nivel_actual, lista_global_bombas, snd_poner_bomba=None, tiempo_vida=140):
         if self.muriendo or not self.is_alive:
             return
 
@@ -87,7 +94,7 @@ class Jugador(Entidad):
             celda = nivel_actual[row][col]
             if celda in [" ", "5"]:  # Espacio libre o sobre la puerta
                 nivel_actual[row][col] = "B"
-                nueva_bomba = Bomba(col, row, self.rango_bombas)
+                nueva_bomba = Bomba(col, row, self.rango_bombas, tiempo_vida=tiempo_vida)
                 self.bombas_activas.append(nueva_bomba)
                 lista_global_bombas.append(nueva_bomba)
 
