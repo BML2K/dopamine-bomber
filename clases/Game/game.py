@@ -10,6 +10,15 @@ from clases.Entities.player import Jugador
 from clases.Game.gamemode import obtener_modo
 
 
+def obtener_ruta_recurso(ruta_relativa):
+    """Devuelve la ruta absoluta a un recurso, compatible con desarrollo y ejecutables de PyInstaller."""
+    if hasattr(sys, "_MEIPASS"):
+        base_path = sys._MEIPASS
+    else:
+        base_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+    return os.path.normpath(os.path.join(base_path, ruta_relativa))
+
+
 class Game:
     def __init__(self):
         pg.init()
@@ -20,6 +29,11 @@ class Game:
         self.height = 624 + self.hud_height  # 13 filas de 48px + 60px HUD
         self.screen = pg.display.set_mode((self.width, self.height))
         pg.display.set_caption("DOPAMINE BOMBER")
+        try:
+            icono = pg.image.load(obtener_ruta_recurso("imagenes/bomba_0.png"))
+            pg.display.set_icon(icono)
+        except Exception:
+            pass
 
         self.clock = pg.time.Clock()
         self.fps = 60
@@ -27,13 +41,17 @@ class Game:
         self.nes_colorkey = (56, 135, 0)
 
         # Tipografía
-        self.font_hud = pg.font.Font("fuentes/pixeled.ttf", 12)
-        self.font_banner = pg.font.Font("fuentes/pixeled.ttf", 22)
-        self.font_sub = pg.font.Font("fuentes/pixeled.ttf", 12)
-        self.font_titulo = pg.font.Font("fuentes/pixeled.ttf", 30)
+        self.font_hud = pg.font.Font(obtener_ruta_recurso("fuentes/pixeled.ttf"), 12)
+        self.font_banner = pg.font.Font(obtener_ruta_recurso("fuentes/pixeled.ttf"), 22)
+        self.font_sub = pg.font.Font(obtener_ruta_recurso("fuentes/pixeled.ttf"), 12)
+        self.font_titulo = pg.font.Font(obtener_ruta_recurso("fuentes/pixeled.ttf"), 30)
 
-        # Memoria y persistencia de progreso
-        self.archivo_guardado = "progreso.json"
+        # Memoria y persistencia de progreso (guardado junto al ejecutable o en raíz del proyecto)
+        if getattr(sys, "frozen", False):
+            base_guardado = os.path.dirname(sys.executable)
+        else:
+            base_guardado = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+        self.archivo_guardado = os.path.join(base_guardado, "progreso.json")
         progreso = self.cargar_progreso()
         self.nivel_numero = progreso.get("nivel_actual", 1)
         self.max_nivel_alcanzado = progreso.get("max_nivel", self.nivel_numero)
@@ -122,7 +140,8 @@ class Game:
             print(f"Error al guardar progreso: {err}")
 
     def cargar_imagen(self, ruta, con_colorkey=False):
-        img = pg.image.load(ruta).convert()
+        ruta_abs = obtener_ruta_recurso(ruta)
+        img = pg.image.load(ruta_abs).convert()
         if con_colorkey:
             img.set_colorkey(self.nes_colorkey)
         return pg.transform.scale(img, (self.tile_size, self.tile_size))
@@ -202,9 +221,9 @@ class Game:
         # 7. Sprites de Puntos Flotantes
         self.sprites_puntos = {}
         for valor in [100, 200, 400, 800, 1000, 2000, 4000, 8000]:
-            ruta = f"imagenes/{valor}pt.png"
-            if os.path.exists(ruta):
-                self.sprites_puntos[valor] = self.cargar_imagen(ruta, con_colorkey=True)
+            ruta_rel = f"imagenes/{valor}pt.png"
+            if os.path.exists(obtener_ruta_recurso(ruta_rel)):
+                self.sprites_puntos[valor] = self.cargar_imagen(ruta_rel, con_colorkey=True)
 
         # 8. Sprites de Power-Ups (Losas)
         self.sprites_powerups = {
@@ -219,20 +238,23 @@ class Game:
 
     def cargar_sonidos_modo(self):
         """Carga los efectos de sonido según el modo de juego activo."""
-        self.snd_poner_bomba = pg.mixer.Sound(self.modo.ruta_poner_bomba)
-        self.snd_boom = pg.mixer.Sound(self.modo.ruta_boom)
-        self.snd_stage_start = pg.mixer.Sound(self.modo.ruta_stage_start)
-        self.snd_stage_victoria = pg.mixer.Sound(self.modo.ruta_stage_victoria)
-        self.snd_stage_die = pg.mixer.Sound(self.modo.ruta_stage_die)
-        self.snd_stage_powerup = pg.mixer.Sound(self.modo.ruta_stage_powerup)
+        self.snd_poner_bomba = pg.mixer.Sound(obtener_ruta_recurso(self.modo.ruta_poner_bomba))
+        self.snd_boom = pg.mixer.Sound(obtener_ruta_recurso(self.modo.ruta_boom))
+        self.snd_stage_start = pg.mixer.Sound(obtener_ruta_recurso(self.modo.ruta_stage_start))
+        self.snd_stage_victoria = pg.mixer.Sound(obtener_ruta_recurso(self.modo.ruta_stage_victoria))
+        self.snd_stage_die = pg.mixer.Sound(obtener_ruta_recurso(self.modo.ruta_stage_die))
+        self.snd_stage_powerup = pg.mixer.Sound(obtener_ruta_recurso(self.modo.ruta_stage_powerup))
         
     def obtener_ruta_nivel(self, num_nivel):
-        ruta = f"Levels/L{num_nivel:02d}.TXT"
-        if not os.path.exists(ruta):
-            ruta = f"Levels/L{num_nivel}.TXT"
-        if not os.path.exists(ruta):
-            ruta = f"Levels/L-NEW{num_nivel:02d}.TXT"
-        return ruta if os.path.exists(ruta) else None
+        for patron in (
+            f"Levels/L{num_nivel:02d}.TXT",
+            f"Levels/L{num_nivel}.TXT",
+            f"Levels/L-NEW{num_nivel:02d}.TXT",
+        ):
+            ruta_abs = obtener_ruta_recurso(patron)
+            if os.path.exists(ruta_abs):
+                return ruta_abs
+        return None
 
     def crear_punto_flotante(self, x, y, valor):
         img = self.sprites_puntos.get(valor, self.sprites_puntos.get(200))
@@ -391,7 +413,7 @@ class Game:
 
     def comenzar_partida(self):
         try:
-            pg.mixer.music.load(self.modo.ruta_musica)
+            pg.mixer.music.load(obtener_ruta_recurso(self.modo.ruta_musica))
             pg.mixer.music.play(-1)
         except Exception:
             pass
